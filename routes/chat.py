@@ -1,8 +1,8 @@
 from fastapi import APIRouter, HTTPException
-from backend.models.request_models import ChatMessageRequest
-from backend.models.response_models import ChatResponse
-from backend.services.chat_service import get_chat_response
-from backend.utils.vectorstore import get_vectorstore
+from models.request_models import ChatMessageRequest
+from models.response_models import ChatResponse
+from services.chat_service import get_chat_response
+from utils.vectorstore import get_vectorstore
 import logging
 
 logger = logging.getLogger(__name__)

@@ -2,8 +2,8 @@ import shutil
 import tempfile
 import os
 from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
-from backend.models.response_models import ResumeUploadResponse
-from backend.services.resume_service import extract_resume_details, build_vectorstore_bg
+from models.response_models import ResumeUploadResponse
+from services.resume_service import extract_resume_details, build_vectorstore_bg
 
 import logging
 

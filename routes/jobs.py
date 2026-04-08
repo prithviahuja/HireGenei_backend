@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
-from backend.models.request_models import JobScrapeRequest
-from backend.models.response_models import JobScrapeResponse
-from backend.services.job_service import scrape_jobs_async
+from models.request_models import JobScrapeRequest
+from models.response_models import JobScrapeResponse
+from services.job_service import scrape_jobs_async
 import logging
 
 logger = logging.getLogger(__name__)
