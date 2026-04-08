@@ -5,8 +5,8 @@ from sentence_transformers import util
 import os
 import logging
 
-from backend.utils.embeddings import get_hf_embeddings, get_sentence_model
-from backend.utils.vectorstore import set_vectorstore, set_roles, set_skills
+from utils.embeddings import get_hf_embeddings, get_sentence_model
+from utils.vectorstore import set_vectorstore, set_roles, set_skills
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS

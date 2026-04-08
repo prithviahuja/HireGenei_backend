@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 
-from backend.routes import resume, jobs, chat
+from routes import resume, jobs, chat
 
 logging.basicConfig(
     level=logging.INFO,

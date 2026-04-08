@@ -6,7 +6,7 @@ from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_classic.chains import create_retrieval_chain
-from backend.utils.vectorstore import get_vectorstore, get_skills, get_roles
+from utils.vectorstore import get_vectorstore, get_skills, get_roles
 import logging
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ def get_chat_response(message: str) -> str:
 
     retriever = vectorstore.as_retriever()
     
-    from backend.core.config import settings
+    from core.config import settings
 
     if not settings.GROQ_API_KEY:
         raise EnvironmentError(
