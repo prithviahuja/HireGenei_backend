@@ -18,3 +18,4 @@ langchain-huggingface
 faiss-cpu
 python-dotenv
 PyPDF2
+gunicorn
