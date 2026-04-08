@@ -6,16 +6,13 @@ python-multipart
 requests
 beautifulsoup4
 pandas
-flair
 pdfplumber
 rapidfuzz
 sentence-transformers
-spacy
 langchain
 langchain-community
 langchain-groq
 langchain-huggingface
 faiss-cpu
 python-dotenv
-PyPDF2
 gunicorn

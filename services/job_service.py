@@ -31,11 +31,6 @@ time_filter_mapping = {
     "Past month": "f_TPR=r2592000",
 }
 
-def get_skills(text):
-    sentence = Sentence(text)
-    flair_model.predict(sentence)
-    return [entity.text for entity in sentence.get_spans("ner")]
-
 def process_job(job, work_type, exp_level, position):
     try:
         title_element = job.find('h3', class_='base-search-card__title')

@@ -1,7 +1,6 @@
 import re
 import pdfplumber
 from rapidfuzz import process
-from sentence_transformers import util
 import os
 import logging
 
@@ -84,6 +83,12 @@ PRECOMPUTED_SKILL_EMBEDDINGS = None
 logger.info("Skill embeddings will be pre-compiled lazily on demand.")
 
 
+def _cos_sim(a, b):
+    # Lazy import to avoid loading sentence-transformers during app startup.
+    from sentence_transformers import util
+    return util.cos_sim(a, b)
+
+
 def get_precomputed_skill_embeddings():
     global PRECOMPUTED_SKILL_EMBEDDINGS
     if PRECOMPUTED_SKILL_EMBEDDINGS is None:
@@ -123,7 +128,7 @@ def skills_extraction(pdf_path: str) -> list[str]:
     threshold = 0.75
     precomputed_skill_embeddings = get_precomputed_skill_embeddings()
     for i, vec in enumerate(text_embeddings):
-        scores = util.cos_sim(vec, precomputed_skill_embeddings)[0]
+        scores = _cos_sim(vec, precomputed_skill_embeddings)[0]
         best_idx = scores.argmax().item()
         if float(scores[best_idx]) >= threshold:
             semantic_matches.add(SKILLS_LIST[best_idx])
@@ -157,7 +162,7 @@ def roles_score(user_skills: list[str]) -> list[str]:
     user_embed = sentence_model.encode(user_text, convert_to_tensor=True)
 
     precomputed_role_embeddings = get_precomputed_role_embeddings()
-    cosine_scores = util.cos_sim(user_embed, precomputed_role_embeddings)[0]
+    cosine_scores = _cos_sim(user_embed, precomputed_role_embeddings)[0]
     scores = cosine_scores.tolist()
 
     roles_scores = []
