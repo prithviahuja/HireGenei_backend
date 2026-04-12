@@ -36,12 +36,30 @@ def get_embedding(text):
     else:
         texts = text
 
-    response = requests.post(
-        "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2",
-        headers={"Authorization": f"Bearer {settings.HF_TOKEN}"},
-        json={"inputs": texts},
-        timeout=60
-    )
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(
+                "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2",
+                headers={"Authorization": f"Bearer {settings.HF_TOKEN}"},
+                json={"sentences": texts},
+                timeout=60
+            )
+            if response.status_code == 200:
+                break
+            elif response.status_code == 429:  # Rate limit
+                if attempt < max_retries - 1:
+                    import time
+                    time.sleep(2 ** attempt)  # Exponential backoff
+                    continue
+            raise RuntimeError(f"HF embedding API request failed ({response.status_code}): {response.text}")
+        except requests.RequestException as e:
+            if attempt < max_retries - 1:
+                import time
+                time.sleep(2 ** attempt)
+                continue
+            raise RuntimeError(f"HF embedding API request failed after retries: {str(e)}")
+
     result = response.json()
 
     if response.status_code != 200:

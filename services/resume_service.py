@@ -201,3 +201,10 @@ def build_vectorstore_bg(pdf_path: str):
         logger.info("Vectorstore build complete.")
     except Exception as e:
         logger.error(f"Failed to build vectorstore: {str(e)}")
+    finally:
+        # Clean up temp file
+        try:
+            os.unlink(pdf_path)
+            logger.info(f"Cleaned up temp file: {pdf_path}")
+        except Exception as e:
+            logger.warning(f"Failed to clean up temp file {pdf_path}: {str(e)}")

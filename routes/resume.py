@@ -31,7 +31,7 @@ async def upload_resume(background_tasks: BackgroundTasks, file: UploadFile = Fi
         logger.info(f"Extraction complete. Found {len(skills)} skills and {len(roles)} roles.")
         
         # Build giant ML embeddings in the background safely without lagging UI!
-        logger.info(f"Offloading FAISS vectorstore build to background tasks for {tmp_path}")
+        logger.info(f"Offloading vectorstore build to background tasks for {tmp_path}")
         background_tasks.add_task(build_vectorstore_bg, tmp_path)
 
         return ResumeUploadResponse(skills=skills, roles=roles)
