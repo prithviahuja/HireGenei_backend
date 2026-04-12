@@ -11,20 +11,49 @@ logging.info("Embeddings module loaded; using HF API.")
 _HF_EMBEDDINGS = None
 
 
+def _normalize_embedding_response(result):
+    if isinstance(result, dict):
+        if "error" in result:
+            raise RuntimeError(f"HF embedding API returned error: {result['error']}")
+        if "embedding" in result:
+            return result["embedding"]
+        if "data" in result and isinstance(result["data"], list):
+            return [item.get("embedding", item) for item in result["data"]]
+
+    if isinstance(result, list) and len(result) > 0:
+        if all(isinstance(item, dict) for item in result):
+            if "embedding" in result[0]:
+                return [item["embedding"] for item in result]
+            if "data" in result[0] and isinstance(result[0]["data"], list):
+                return [item["data"][0].get("embedding", item["data"][0]) for item in result]
+
+    return result
+
+
 def get_embedding(text):
     if isinstance(text, str):
         texts = [text]
     else:
         texts = text
+
     response = requests.post(
         "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2",
         headers={"Authorization": f"Bearer {settings.HF_TOKEN}"},
-        json={"inputs": texts}
+        json={"inputs": texts},
+        timeout=60
     )
     result = response.json()
+
+    if response.status_code != 200:
+        raise RuntimeError(f"HF embedding API request failed ({response.status_code}): {result}")
+
+    normalized = _normalize_embedding_response(result)
     if isinstance(text, str):
-        return result[0] if isinstance(result, list) and len(result) > 0 else result
-    return result
+        if isinstance(normalized, list) and len(normalized) == 1 and isinstance(normalized[0], (list, tuple)):
+            return normalized[0]
+        return normalized
+
+    return normalized
 
 
 def _load_embedding_models():
@@ -53,6 +82,8 @@ def get_sentence_model():
             embeddings = get_embedding(texts)
             if convert_to_tensor:
                 import torch
-                return torch.tensor(embeddings)
+                if isinstance(embeddings, dict):
+                    raise RuntimeError("Unexpected embedding response format: dict")
+                return torch.tensor(embeddings, dtype=torch.float32)
             return embeddings
     return MockSentenceModel()

@@ -16,7 +16,7 @@ async def chat_with_resume(request: ChatMessageRequest):
     vectorstore = get_vectorstore()
     
     if vectorstore is None:
-        logger.warning("Rejected chat query: FAISS Vectorstore not found. Resume was not uploaded properly.")
+        logger.warning("Rejected chat query: vectorstore not found. Resume must be uploaded and processed first.")
         raise HTTPException(status_code=400, detail="Upload resume first")
         
     try:
