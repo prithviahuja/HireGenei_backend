@@ -37,7 +37,7 @@ def get_embedding(text):
         texts = text
 
     response = requests.post(
-        "https://router.huggingface.co/api/models/sentence-transformers/all-MiniLM-L6-v2",
+        "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2",
         headers={"Authorization": f"Bearer {settings.HF_TOKEN}"},
         json={"inputs": texts},
         timeout=60
