@@ -8,11 +8,11 @@ beautifulsoup4
 pandas
 pdfplumber
 rapidfuzz
-sentence-transformers
 langchain
 langchain-community
 langchain-groq
 langchain-huggingface
-faiss-cpu
+chromadb
+torch
 python-dotenv
 gunicorn

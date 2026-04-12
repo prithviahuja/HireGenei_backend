@@ -8,7 +8,7 @@ from utils.embeddings import get_hf_embeddings, get_sentence_model
 from utils.vectorstore import set_vectorstore, set_roles, set_skills
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
+from langchain_community.vectorstores import Chroma
 
 logger = logging.getLogger(__name__)
 
@@ -84,9 +84,12 @@ logger.info("Skill embeddings will be pre-compiled lazily on demand.")
 
 
 def _cos_sim(a, b):
-    # Lazy import to avoid loading sentence-transformers during app startup.
-    from sentence_transformers import util
-    return util.cos_sim(a, b)
+    import torch
+    import torch.nn.functional as F
+    # Assuming a is (n, d), b is (m, d)
+    a_norm = F.normalize(a, p=2, dim=1)
+    b_norm = F.normalize(b, p=2, dim=1)
+    return torch.mm(a_norm, b_norm.t())
 
 
 def get_precomputed_skill_embeddings():
@@ -193,7 +196,7 @@ def build_vectorstore_bg(pdf_path: str):
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=5000, chunk_overlap=200)
         splits = text_splitter.split_documents(documents)
 
-        vectorstore = FAISS.from_documents(splits, get_hf_embeddings())
+        vectorstore = Chroma.from_documents(splits, get_hf_embeddings())
         set_vectorstore(vectorstore)
         logger.info("Vectorstore build complete.")
     except Exception as e:
