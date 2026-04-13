@@ -39,7 +39,7 @@ def get_embedding(text):
     import time
     for attempt in range(3):
         response = requests.post(
-            "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2",
+            "https://router.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2",
             headers={"Authorization": f"Bearer {settings.HF_TOKEN}"},
             json={"inputs": texts}
         )
