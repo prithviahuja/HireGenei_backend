@@ -86,6 +86,9 @@ logger.info("Skill embeddings will be pre-compiled lazily on demand.")
 def _cos_sim(a, b):
     import torch
     import torch.nn.functional as F
+    # Handle 1D HF API vectors by adding a leading batch dimension.
+    if a.dim() == 1:
+        a = a.unsqueeze(0)
     # Assuming a is (n, d), b is (m, d)
     a_norm = F.normalize(a, p=2, dim=1)
     b_norm = F.normalize(b, p=2, dim=1)
