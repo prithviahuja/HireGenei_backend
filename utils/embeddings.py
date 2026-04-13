@@ -36,42 +36,49 @@ def get_embedding(text):
     else:
         texts = text
 
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            response = requests.post(
-                "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2",
-                headers={"Authorization": f"Bearer {settings.HF_TOKEN}"},
-                json={"sentences": texts},
-                timeout=60
-            )
-            if response.status_code == 200:
-                break
-            elif response.status_code == 429:  # Rate limit
+    batch_size = 100  # Process in batches to avoid API limits
+    all_embeddings = []
+
+    for i in range(0, len(texts), batch_size):
+        batch_texts = texts[i:i + batch_size]
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(
+                    "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2",
+                    headers={"Authorization": f"Bearer {settings.HF_TOKEN}"},
+                    json={"inputs": batch_texts},
+                    timeout=60
+                )
+                if response.status_code == 200:
+                    break
+                elif response.status_code == 429:  # Rate limit
+                    if attempt < max_retries - 1:
+                        import time
+                        time.sleep(2 ** attempt)  # Exponential backoff
+                        continue
+                raise RuntimeError(f"HF embedding API request failed ({response.status_code}): {response.text}")
+            except requests.RequestException as e:
                 if attempt < max_retries - 1:
                     import time
-                    time.sleep(2 ** attempt)  # Exponential backoff
+                    time.sleep(2 ** attempt)
                     continue
-            raise RuntimeError(f"HF embedding API request failed ({response.status_code}): {response.text}")
-        except requests.RequestException as e:
-            if attempt < max_retries - 1:
-                import time
-                time.sleep(2 ** attempt)
-                continue
-            raise RuntimeError(f"HF embedding API request failed after retries: {str(e)}")
+                raise RuntimeError(f"HF embedding API request failed after retries: {str(e)}")
 
-    result = response.json()
+        result = response.json()
 
-    if response.status_code != 200:
-        raise RuntimeError(f"HF embedding API request failed ({response.status_code}): {result}")
+        if response.status_code != 200:
+            raise RuntimeError(f"HF embedding API request failed ({response.status_code}): {result}")
 
-    normalized = _normalize_embedding_response(result)
+        normalized = _normalize_embedding_response(result)
+        all_embeddings.extend(normalized)
+
     if isinstance(text, str):
-        if isinstance(normalized, list) and len(normalized) == 1 and isinstance(normalized[0], (list, tuple)):
-            return normalized[0]
-        return normalized
+        if isinstance(all_embeddings, list) and len(all_embeddings) == 1 and isinstance(all_embeddings[0], (list, tuple)):
+            return all_embeddings[0]
+        return all_embeddings
 
-    return normalized
+    return all_embeddings
 
 
 def _load_embedding_models():
