@@ -62,14 +62,29 @@ def get_embedding(text):
 def _load_embedding_models():
     global _HF_EMBEDDINGS
     if _HF_EMBEDDINGS is None:
-        from langchain_huggingface import HuggingFaceInferenceAPIEmbeddings
+        from langchain.embeddings.base import Embeddings
+        import torch
+        
+        class HFRouterEmbeddings(Embeddings):
+            """Custom embeddings using HF Router API."""
+            
+            def embed_documents(self, texts):
+                """Embed documents using HF Router."""
+                embeddings = get_embedding(texts)
+                if isinstance(embeddings, torch.Tensor):
+                    return embeddings.tolist()
+                return embeddings
+            
+            def embed_query(self, text):
+                """Embed a single query."""
+                embedding = get_embedding(text)
+                if isinstance(embedding, torch.Tensor):
+                    return embedding.tolist()
+                return embedding
 
-        logging.info("Initializing HF Inference API embeddings...")
-        _HF_EMBEDDINGS = HuggingFaceInferenceAPIEmbeddings(
-            api_key=settings.HF_TOKEN,
-            model_name="sentence-transformers/all-MiniLM-L6-v2"
-        )
-        logging.info("HF Inference API embeddings initialized successfully.")
+        logging.info("Initializing HF Router embeddings wrapper...")
+        _HF_EMBEDDINGS = HFRouterEmbeddings()
+        logging.info("HF Router embeddings initialized successfully.")
 
     return _HF_EMBEDDINGS
 
