@@ -36,49 +36,27 @@ def get_embedding(text):
     else:
         texts = text
 
-    batch_size = 100  # Process in batches to avoid API limits
-    all_embeddings = []
-
-    for i in range(0, len(texts), batch_size):
-        batch_texts = texts[i:i + batch_size]
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                response = requests.post(
-                    "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2",
-                    headers={"Authorization": f"Bearer {settings.HF_TOKEN}"},
-                    json={"inputs": batch_texts},
-                    timeout=60
-                )
-                if response.status_code == 200:
-                    break
-                elif response.status_code == 429:  # Rate limit
-                    if attempt < max_retries - 1:
-                        import time
-                        time.sleep(2 ** attempt)  # Exponential backoff
-                        continue
-                raise RuntimeError(f"HF embedding API request failed ({response.status_code}): {response.text}")
-            except requests.RequestException as e:
-                if attempt < max_retries - 1:
-                    import time
-                    time.sleep(2 ** attempt)
-                    continue
-                raise RuntimeError(f"HF embedding API request failed after retries: {str(e)}")
-
-        result = response.json()
-
+    import time
+    for attempt in range(3):
+        response = requests.post(
+            "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2",
+            headers={"Authorization": f"Bearer {settings.HF_TOKEN}"},
+            json={"inputs": texts}
+        )
+        if response.status_code == 503:
+            wait = response.json().get("estimated_time", 20)
+            time.sleep(min(wait, 30))
+            continue
         if response.status_code != 200:
-            raise RuntimeError(f"HF embedding API request failed ({response.status_code}): {result}")
-
-        normalized = _normalize_embedding_response(result)
-        all_embeddings.extend(normalized)
-
-    if isinstance(text, str):
-        if isinstance(all_embeddings, list) and len(all_embeddings) == 1 and isinstance(all_embeddings[0], (list, tuple)):
-            return all_embeddings[0]
-        return all_embeddings
-
-    return all_embeddings
+            raise RuntimeError(f"HF embedding API request failed ({response.status_code}): {response.text}")
+        
+        import torch
+        embeddings = torch.tensor(response.json())
+        if isinstance(text, str):
+            return embeddings[0]  # Return single embedding for single input
+        return embeddings
+    
+    raise RuntimeError("HF model failed to wake up after 3 attempts")
 
 
 def _load_embedding_models():
@@ -106,9 +84,6 @@ def get_sentence_model():
         def encode(self, texts, convert_to_tensor=False):
             embeddings = get_embedding(texts)
             if convert_to_tensor:
-                import torch
-                if isinstance(embeddings, dict):
-                    raise RuntimeError("Unexpected embedding response format: dict")
-                return torch.tensor(embeddings, dtype=torch.float32)
-            return embeddings
+                return embeddings  # already a tensor
+            return embeddings.tolist()  # convert to list if not tensor
     return MockSentenceModel()
