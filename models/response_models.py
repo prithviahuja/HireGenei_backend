@@ -1,9 +1,11 @@
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 
 class ResumeUploadResponse(BaseModel):
     skills: List[str]
     roles: List[str]
+    score: int = 0
+    session_id: Optional[str] = None
 
 class JobResponse(BaseModel):
     title: str
@@ -16,3 +18,6 @@ class JobScrapeResponse(BaseModel):
 
 class ChatResponse(BaseModel):
     reply: str
+
+class ResumeStatusResponse(BaseModel):
+    ready: bool

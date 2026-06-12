@@ -5,10 +5,10 @@ import os
 import logging
 
 from utils.embeddings import get_hf_embeddings, get_sentence_model
-from utils.vectorstore import set_vectorstore, set_roles, set_skills
+from utils.vectorstore import set_vectorstore
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Chroma
+from langchain_community.vectorstores import FAISS
 
 logger = logging.getLogger(__name__)
 
@@ -84,15 +84,9 @@ logger.info("Skill embeddings will be pre-compiled lazily on demand.")
 
 
 def _cos_sim(a, b):
-    import torch
-    import torch.nn.functional as F
-    # Handle 1D HF API vectors by adding a leading batch dimension.
-    if a.dim() == 1:
-        a = a.unsqueeze(0)
-    # Assuming a is (n, d), b is (m, d)
-    a_norm = F.normalize(a, p=2, dim=1)
-    b_norm = F.normalize(b, p=2, dim=1)
-    return torch.mm(a_norm, b_norm.t())
+    # Lazy import to avoid loading sentence-transformers during app startup.
+    from sentence_transformers import util
+    return util.cos_sim(a, b)
 
 
 def get_precomputed_skill_embeddings():
@@ -178,19 +172,59 @@ def roles_score(user_skills: list[str]) -> list[str]:
     roles_scores.sort(key=lambda x: x[1], reverse=True)
     return [role for role, score in roles_scores[:5]]
 
+
+# ---- Display-name map so the UI shows "Scikit-learn" not "scikitlearn" (#6) ----
+SKILL_DISPLAY = {
+    "cpp": "C++", "csharp": "C#", "javascript": "JavaScript", "typescript": "TypeScript",
+    "nodejs": "Node.js", "expressjs": "Express.js", "nextjs": "Next.js", "vuejs": "Vue.js",
+    "reactnative": "React Native", "springboot": "Spring Boot", "dotnet": ".NET",
+    "fastapi": "FastAPI", "restapi": "REST API", "graphql": "GraphQL", "grpc": "gRPC",
+    "websockets": "WebSockets", "html": "HTML", "css": "CSS", "sql": "SQL",
+    "postgresql": "PostgreSQL", "mysql": "MySQL", "mongodb": "MongoDB", "sqlite": "SQLite",
+    "dynamodb": "DynamoDB", "influxdb": "InfluxDB", "scikitlearn": "Scikit-learn",
+    "xgboost": "XGBoost", "lightgbm": "LightGBM", "catboost": "CatBoost", "mlflow": "MLflow",
+    "tensorflow": "TensorFlow", "pytorch": "PyTorch", "huggingface": "Hugging Face",
+    "openaiai": "OpenAI", "langchain": "LangChain", "langraph": "LangGraph", "lanserve": "LangServe",
+    "spacy": "spaCy", "nltk": "NLTK", "opencv": "OpenCV", "yolo": "YOLO", "paddleocr": "PaddleOCR",
+    "onnx": "ONNX", "tfserving": "TF Serving", "bentoml": "BentoML", "sagemaker": "SageMaker",
+    "vertexai": "Vertex AI", "powerbi": "Power BI", "aws": "AWS", "gcp": "GCP", "azure": "Azure",
+    "s3": "S3", "ec2": "EC2", "ci": "CI", "threejs": "Three.js", "web3js": "Web3.js",
+    "ethersjs": "Ethers.js", "ipfs": "IPFS", "unrealengine": "Unreal Engine", "jwt": "JWT",
+    "oauth2": "OAuth2", "saml": "SAML", "ssltls": "SSL/TLS", "owasp": "OWASP", "rag": "RAG",
+    "pyg": "PyG", "ann": "ANN", "cnn": "CNN", "rnn": "RNN", "lstm": "LSTM", "bert": "BERT",
+    "gpt": "GPT", "t5": "T5", "peft": "PEFT", "lora": "LoRA", "qlora": "QLoRA", "ios": "iOS",
+    "android": "Android", "firebase": "Firebase", "cloudflare": "Cloudflare",
+}
+
+def prettify_skill(skill: str) -> str:
+    if skill in SKILL_DISPLAY:
+        return SKILL_DISPLAY[skill]
+    if len(skill) <= 3:
+        return skill.upper()
+    return skill.capitalize()
+
+
+def compute_resume_score(skills, roles) -> int:
+    """A simple, deterministic 0-100 readiness score (#5)."""
+    skill_points = min(len(skills) * 3, 55)
+    role_points = min(len(roles) * 5, 25)
+    score = 20 + skill_points + role_points
+    return max(35, min(score, 99))
+
 def extract_resume_details(pdf_path: str):
     logger.info(f"Extracting skills from {pdf_path}")
     extracted_skills = skills_extraction(pdf_path)
-    
+
     logger.info(f"Extracting roles from skills")
     matched_roles = roles_score(extracted_skills)
 
-    set_skills(extracted_skills)
-    set_roles(matched_roles)
-    
-    return extracted_skills, matched_roles
+    pretty_skills = [prettify_skill(s) for s in extracted_skills]
+    score = compute_resume_score(pretty_skills, matched_roles)
 
-def build_vectorstore_bg(pdf_path: str):
+    # Returns display-ready skills, matched roles, and a readiness score.
+    return pretty_skills, matched_roles, score
+
+def build_vectorstore_bg(pdf_path: str, session_id: str):
     try:
         logger.info(f"Building vectorstore from document in background...")
         loader = PyPDFLoader(pdf_path)
@@ -199,15 +233,8 @@ def build_vectorstore_bg(pdf_path: str):
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=5000, chunk_overlap=200)
         splits = text_splitter.split_documents(documents)
 
-        vectorstore = Chroma.from_documents(splits, get_hf_embeddings())
-        set_vectorstore(vectorstore)
+        vectorstore = FAISS.from_documents(splits, get_hf_embeddings())
+        set_vectorstore(session_id, vectorstore)
         logger.info("Vectorstore build complete.")
     except Exception as e:
         logger.error(f"Failed to build vectorstore: {str(e)}")
-    finally:
-        # Clean up temp file
-        try:
-            os.unlink(pdf_path)
-            logger.info(f"Cleaned up temp file: {pdf_path}")
-        except Exception as e:
-            logger.warning(f"Failed to clean up temp file {pdf_path}: {str(e)}")

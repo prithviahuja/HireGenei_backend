@@ -8,6 +8,7 @@ from datetime import datetime
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from fastapi.concurrency import run_in_threadpool
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -161,14 +162,65 @@ def run_scrapper_logic(cities, states, positions, work_types, exp_levels, time_f
         return []
     return df.to_dict(orient="records")
 
+def _build_locations(cities, states):
+    cities_list = [c.strip() for c in cities.split(',') if c.strip()]
+    states_list = [s.strip() for s in states.split(',') if s.strip()]
+    if states_list:
+        return [f"{city},{state}" for city in cities_list for state in states_list]
+    return cities_list
+
+
+async def scrape_jobs_stream(roles, cities, country, work_types, exp_levels, time_filter):
+    """Yield jobs incrementally as each (city, role) worker finishes, so the
+    frontend can render results live instead of waiting for everything.
+
+    A semaphore caps concurrency at 3 (like the original ThreadPoolExecutor) to
+    avoid tripping LinkedIn rate-limits, and we de-dupe by link AND title+company.
+    """
+    locations = _build_locations(cities, country)
+    positions = [str(p).strip().replace(' ', '%20') for p in roles if isinstance(p, str) and p.strip()]
+
+    if not locations or not positions:
+        return
+
+    sem = asyncio.Semaphore(3)
+
+    async def worker(loc, pos):
+        async with sem:
+            return await run_in_threadpool(
+                scrape_jobs_sync, loc, pos, work_types, exp_levels, time_filter
+            )
+
+    tasks = [asyncio.create_task(worker(loc, pos)) for loc in locations for pos in positions]
+    logger.info(f"Streaming scrape: {len(tasks)} (city x role) workers dispatched.")
+
+    seen_links = set()
+    seen_tc = set()  # (title, company, location) secondary de-dupe (#9)
+
+    for fut in asyncio.as_completed(tasks):
+        try:
+            jobs = await fut
+        except Exception as e:
+            logger.error(f"Stream worker failed: {str(e)}", exc_info=True)
+            continue
+        for job in jobs or []:
+            link = job.get("link")
+            tc = (
+                job.get("title", "").strip().lower(),
+                job.get("company", "").strip().lower(),
+                job.get("location", "").strip().lower(),
+            )
+            if (link and link in seen_links) or (tc in seen_tc):
+                continue
+            if link:
+                seen_links.add(link)
+            seen_tc.add(tc)
+            yield job
+
+
 async def scrape_jobs_async(roles, cities, country, work_types, exp_levels, time_filter):
-    # Offload the synchronous scraping logic to a threadpool to avoid blocking FastAPI
-    return await run_in_threadpool(
-        run_scrapper_logic,
-        cities=cities,
-        states=country, # map country to states
-        positions=roles,
-        work_types=work_types,
-        exp_levels=exp_levels,
-        time_filter=time_filter
-    )
+    # Non-streaming variant: collect everything from the incremental generator.
+    results = []
+    async for job in scrape_jobs_stream(roles, cities, country, work_types, exp_levels, time_filter):
+        results.append(job)
+    return results

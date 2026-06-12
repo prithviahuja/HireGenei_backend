@@ -11,3 +11,4 @@ class JobScrapeRequest(BaseModel):
 
 class ChatMessageRequest(BaseModel):
     message: str
+    session_id: Optional[str] = None

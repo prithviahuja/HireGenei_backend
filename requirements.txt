@@ -7,13 +7,12 @@ requests
 beautifulsoup4
 pandas
 pdfplumber
-pypdf
 rapidfuzz
+sentence-transformers
 langchain
 langchain-community
 langchain-groq
 langchain-huggingface
-chromadb
-torch
+faiss-cpu
 python-dotenv
 gunicorn
