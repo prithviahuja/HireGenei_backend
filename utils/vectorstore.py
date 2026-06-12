@@ -1,8 +1,7 @@
-# Per-session store.
-# Previously this was a single global vectorstore/skills/roles shared across ALL
-# users, which meant concurrent uploads overwrote each other. We now key state by
-# a session_id returned at resume-upload time. An LRU cap keeps memory bounded on
-# small hosts (e.g. Render free tier).
+# Per-session store (keeps your memory-light design; only changes how state is keyed).
+# Previously a single global vectorstore/skills/roles was shared across ALL users,
+# so concurrent uploads overwrote each other. We now key state by a session_id
+# returned at resume-upload time, with an LRU cap so memory stays bounded.
 
 import time
 import threading
@@ -10,7 +9,7 @@ from collections import OrderedDict
 
 _LOCK = threading.Lock()
 _SESSIONS: "OrderedDict[str, dict]" = OrderedDict()
-_MAX_SESSIONS = 10  # evict oldest beyond this to bound memory
+_MAX_SESSIONS = 10
 
 
 def _evict_locked():

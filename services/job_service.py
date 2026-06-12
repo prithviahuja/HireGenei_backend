@@ -172,14 +172,11 @@ def _build_locations(cities, states):
 
 async def scrape_jobs_stream(roles, cities, country, work_types, exp_levels, time_filter):
     """Yield jobs incrementally as each (city, role) worker finishes, so the
-    frontend can render results live instead of waiting for everything.
-
-    A semaphore caps concurrency at 3 (like the original ThreadPoolExecutor) to
-    avoid tripping LinkedIn rate-limits, and we de-dupe by link AND title+company.
-    """
+    frontend renders results live. Concurrency is capped at 3 (like the original
+    ThreadPoolExecutor) to avoid LinkedIn rate-limits; de-dupe by link AND
+    (title, company, location)."""
     locations = _build_locations(cities, country)
     positions = [str(p).strip().replace(' ', '%20') for p in roles if isinstance(p, str) and p.strip()]
-
     if not locations or not positions:
         return
 
@@ -195,8 +192,7 @@ async def scrape_jobs_stream(roles, cities, country, work_types, exp_levels, tim
     logger.info(f"Streaming scrape: {len(tasks)} (city x role) workers dispatched.")
 
     seen_links = set()
-    seen_tc = set()  # (title, company, location) secondary de-dupe (#9)
-
+    seen_tc = set()
     for fut in asyncio.as_completed(tasks):
         try:
             jobs = await fut

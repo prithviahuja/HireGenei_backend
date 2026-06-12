@@ -35,7 +35,6 @@ async def upload_resume(background_tasks: BackgroundTasks, file: UploadFile = Fi
         session_id = str(uuid.uuid4())
         create_session(session_id, skills, roles)
 
-        # Build FAISS embeddings in the background so the response is fast.
         logger.info(f"Offloading vectorstore build for session {session_id}")
         background_tasks.add_task(build_vectorstore_bg, tmp_path, session_id)
 
@@ -49,5 +48,4 @@ async def upload_resume(background_tasks: BackgroundTasks, file: UploadFile = Fi
 
 @router.get("/status/{session_id}", response_model=ResumeStatusResponse)
 async def resume_status(session_id: str):
-    """Lets the frontend know when the AI consultant (RAG) is ready (#10)."""
     return ResumeStatusResponse(ready=is_ready(session_id))

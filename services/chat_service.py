@@ -8,7 +8,6 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
-# Stronger persona + behavior guidance (#8). Used for both RAG and general modes.
 PERSONA = (
     "You are HireGenei, a sharp, encouraging AI career consultant. "
     "Be concrete and practical. Prefer short, scannable bullet points over long paragraphs. "
@@ -61,7 +60,7 @@ def get_chat_response(message: str, session_id: str | None = None) -> str:
     import time
     start_time = time.time()
 
-    # ---- General mode: no resume / vectorstore not ready yet (#3) ----
+    # ---- General mode: no resume / vectorstore not ready yet ----
     if vectorstore is None:
         logger.info("Chat in GENERAL mode (no vectorstore for this session).")
         prompt = ChatPromptTemplate.from_template(GENERAL_TEMPLATE)

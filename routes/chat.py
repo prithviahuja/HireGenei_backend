@@ -12,8 +12,7 @@ router = APIRouter()
 @router.post("/", response_model=ChatResponse)
 async def chat_with_resume(request: ChatMessageRequest):
     logger.info(f"Chat request (session={request.session_id}): '{request.message[:50]}...'")
-    # No hard 400 anymore: chat works without a resume (general mode) and uses
-    # RAG automatically when this session's vectorstore is ready (#3).
+    # No hard 400: works without a resume (general mode), uses RAG when ready.
     try:
         reply = get_chat_response(request.message, request.session_id)
         return ChatResponse(reply=reply)
