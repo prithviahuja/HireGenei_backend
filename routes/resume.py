@@ -3,7 +3,7 @@ import tempfile
 import uuid
 from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
 from models.response_models import ResumeUploadResponse, ResumeStatusResponse
-from services.resume_service import extract_resume_details, build_vectorstore_bg
+from services.resume_service import extract_resume_details, extract_resume_text, build_vectorstore_bg
 from utils.vectorstore import create_session, is_ready
 
 import logging
@@ -31,9 +31,13 @@ async def upload_resume(background_tasks: BackgroundTasks, file: UploadFile = Fi
         skills, roles, score = extract_resume_details(tmp_path)
         logger.info(f"Extraction complete. {len(skills)} skills, {len(roles)} roles, score {score}.")
 
+        # Pull readable full text now, BEFORE the background task deletes the PDF.
+        # Needed later by the tailored-email generator (projects/experience).
+        resume_text = extract_resume_text(tmp_path)
+
         # One session per upload so concurrent users never clobber each other.
         session_id = str(uuid.uuid4())
-        create_session(session_id, skills, roles)
+        create_session(session_id, skills, roles, resume_text=resume_text)
 
         logger.info(f"Offloading vectorstore build for session {session_id}")
         background_tasks.add_task(build_vectorstore_bg, tmp_path, session_id)

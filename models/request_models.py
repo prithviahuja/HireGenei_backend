@@ -12,3 +12,10 @@ class JobScrapeRequest(BaseModel):
 class ChatMessageRequest(BaseModel):
     message: str
     session_id: Optional[str] = None
+
+class JobMatchRequest(BaseModel):
+    session_id: str
+    title: str
+    company: str
+    location: Optional[str] = ""
+    link: str

@@ -21,3 +21,29 @@ class ChatResponse(BaseModel):
 
 class ResumeStatusResponse(BaseModel):
     ready: bool
+
+class MatchResult(BaseModel):
+    score: int
+    matched_skills: List[str] = []
+    missing_skills: List[str] = []
+    summary: str = ""
+    jd_skill_count: int = 0
+
+class ContactInfo(BaseModel):
+    emails: List[str] = []
+    phones: List[str] = []
+    source: str = "none"
+    confidence: str = "none"
+    site: Optional[str] = None
+
+class EmailDraft(BaseModel):
+    subject: str = ""
+    body: str = ""
+    to: str = ""
+
+class JobMatchResponse(BaseModel):
+    match: MatchResult
+    contact: ContactInfo
+    email: EmailDraft
+    description_excerpt: str = ""
+    has_description: bool = False

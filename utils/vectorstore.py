@@ -17,12 +17,16 @@ def _evict_locked():
         _SESSIONS.popitem(last=False)
 
 
-def create_session(session_id: str, skills, roles):
+def create_session(session_id: str, skills, roles, resume_text: str = ""):
     with _LOCK:
         _SESSIONS[session_id] = {
             "vectorstore": None,
             "skills": skills,
             "roles": roles,
+            # Raw resume text kept so the tailored-email generator can reference
+            # the user's real projects/experience (the PDF itself is deleted once
+            # the vectorstore is built).
+            "resume_text": resume_text or "",
             "ts": time.time(),
         }
         _SESSIONS.move_to_end(session_id)
@@ -59,6 +63,11 @@ def get_skills(session_id):
 def get_roles(session_id):
     s = get_session(session_id)
     return s.get("roles", []) if s else []
+
+
+def get_resume_text(session_id):
+    s = get_session(session_id)
+    return s.get("resume_text", "") if s else ""
 
 
 def is_ready(session_id) -> bool:

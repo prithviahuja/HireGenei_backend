@@ -78,6 +78,69 @@ def clean_resume_text(text: str) -> str:
     text = re.sub(r'\s+', ' ', text)
     return text.lower().strip()
 
+def extract_resume_text(pdf_path: str) -> str:
+    """Readable full-text extraction that PRESERVES line structure.
+
+    Unlike clean_resume_text (which lowercases and collapses everything onto one
+    line for skill matching), this keeps newlines and original casing so the
+    email LLM can read projects/experience sections naturally.
+    """
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            pages = [page.extract_text() for page in pdf.pages if page.extract_text()]
+        text = "\n".join(pages)
+    except Exception as e:
+        logger.error(f"Failed to extract readable resume text: {str(e)}")
+        return ""
+    text = text.replace('​', ' ').replace('●', '• ')
+    text = re.sub(r'[ \t]+', ' ', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
+
+# ---- Applicant contact details (for the email signature) ----
+_EMAIL_RE = re.compile(r'[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}')
+_PHONE_RE = re.compile(r'(\+?\d[\d\s\-().]{7,}\d)')
+_LINKEDIN_RE = re.compile(r'(?:https?://)?(?:www\.)?linkedin\.com/(?:in|pub)/[A-Za-z0-9\-_%]+', re.I)
+_GITHUB_RE = re.compile(r'(?:https?://)?(?:www\.)?github\.com/[A-Za-z0-9\-_.]+', re.I)
+
+
+def _normalize_url(url: str) -> str:
+    url = url.strip().rstrip('/.,)')
+    if not url.lower().startswith('http'):
+        url = 'https://' + url
+    return url
+
+
+def extract_applicant_contacts(resume_text: str) -> dict:
+    """Pull the applicant's own contact details out of their resume so the
+    generated email is signed correctly. Name is left to the LLM (hard to
+    regex reliably)."""
+    if not resume_text:
+        return {}
+    contacts: dict = {}
+
+    email_m = _EMAIL_RE.search(resume_text)
+    if email_m:
+        contacts["email"] = email_m.group(0).strip()
+
+    li_m = _LINKEDIN_RE.search(resume_text)
+    if li_m:
+        contacts["linkedin"] = _normalize_url(li_m.group(0))
+
+    gh_m = _GITHUB_RE.search(resume_text)
+    if gh_m and not gh_m.group(0).rstrip('/').lower().endswith('github.com'):
+        contacts["github"] = _normalize_url(gh_m.group(0))
+
+    for cand in _PHONE_RE.findall(resume_text):
+        digits = re.sub(r'\D', '', cand)
+        if 8 <= len(digits) <= 15:
+            contacts["phone"] = cand.strip()
+            break
+
+    return contacts
+
+
 # Precompute heavy ML embeddings on startup so they don't block requests
 PRECOMPUTED_SKILL_EMBEDDINGS = None
 logger.info("Skill embeddings will be pre-compiled lazily on demand.")
@@ -104,10 +167,12 @@ def get_precomputed_skill_embeddings():
     return PRECOMPUTED_SKILL_EMBEDDINGS
 
 
-def skills_extraction(pdf_path: str) -> list[str]:
-    with pdfplumber.open(pdf_path) as pdf:
-        raw_text = "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
-    raw_text = clean_resume_text(raw_text)
+def match_skills_in_text(raw_text: str, use_semantic: bool = True) -> list[str]:
+    """Core skill matcher (exact + fuzzy + optional semantic) over already-cleaned
+    text. Reused for both resumes and job descriptions. Returns raw skill keys
+    from SKILLS_LIST (not prettified)."""
+    if not raw_text:
+        return []
 
     exact_matches = set()
     for skill in SKILLS_LIST:
@@ -122,26 +187,33 @@ def skills_extraction(pdf_path: str) -> list[str]:
         if match:
             fuzzy_matches.add(match[0])
 
-    import time
-    start_time = time.time()
-    # We only encode the dynamic words heavily now, bypassing ~200 redundant vector calcs
-    sentence_model = get_sentence_model()
-    text_embeddings = sentence_model.encode(list(words), convert_to_tensor=True)
-    encode_time = time.time() - start_time
-    logger.info(f"Encoded {len(words)} dynamic text words in {encode_time:.2f}s")
-
     semantic_matches = set()
-    threshold = 0.75
-    precomputed_skill_embeddings = get_precomputed_skill_embeddings()
-    for i, vec in enumerate(text_embeddings):
-        scores = _cos_sim(vec, precomputed_skill_embeddings)[0]
-        best_idx = scores.argmax().item()
-        if float(scores[best_idx]) >= threshold:
-            semantic_matches.add(SKILLS_LIST[best_idx])
+    if use_semantic and words:
+        import time
+        start_time = time.time()
+        # We only encode the dynamic words heavily now, bypassing ~200 redundant vector calcs
+        sentence_model = get_sentence_model()
+        text_embeddings = sentence_model.encode(list(words), convert_to_tensor=True)
+        logger.info(f"Encoded {len(words)} dynamic text words in {time.time() - start_time:.2f}s")
+
+        threshold = 0.75
+        precomputed_skill_embeddings = get_precomputed_skill_embeddings()
+        for vec in text_embeddings:
+            scores = _cos_sim(vec, precomputed_skill_embeddings)[0]
+            best_idx = scores.argmax().item()
+            if float(scores[best_idx]) >= threshold:
+                semantic_matches.add(SKILLS_LIST[best_idx])
 
     final_skills = list(exact_matches.union(fuzzy_matches).union(semantic_matches))
-    logger.info(f"Skill extraction done: {len(exact_matches)} exact, {len(fuzzy_matches)} fuzzy, {len(semantic_matches)} semantic matches.")
+    logger.info(f"Skill match done: {len(exact_matches)} exact, {len(fuzzy_matches)} fuzzy, {len(semantic_matches)} semantic.")
     return final_skills
+
+
+def skills_extraction(pdf_path: str) -> list[str]:
+    with pdfplumber.open(pdf_path) as pdf:
+        raw_text = "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
+    raw_text = clean_resume_text(raw_text)
+    return match_skills_in_text(raw_text, use_semantic=True)
 
 logger.info("Role embeddings will be pre-compiled lazily on demand.")
 roles_text_global = [" ".join(value) for value in JOB_ROLES.values()]
