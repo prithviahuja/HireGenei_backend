@@ -18,16 +18,20 @@ from services.resume_service import (
 logger = logging.getLogger(__name__)
 
 
-def _embedding_similarity(resume_repr: str, jd_repr: str) -> float:
-    """Cosine similarity in [0, 1] between resume and JD text."""
+def _embedding_similarity(resume_repr: str, jd_repr: str):
+    """Cosine similarity in [0, 1] between resume and JD text, or None if the
+    embedding service is unavailable/slow (so the caller can fall back instead
+    of blocking)."""
     try:
         model = get_sentence_model()
-        emb = model.encode([resume_repr, jd_repr], convert_to_tensor=True)
+        # MiniLM only uses the first ~256 tokens, so long inputs are wasteful and
+        # slow the HF call; cap them.
+        emb = model.encode([resume_repr[:1200], jd_repr[:1200]], convert_to_tensor=True)
         sim = float(_cos_sim(emb[0], emb[1:2])[0][0])
         return max(0.0, min(sim, 1.0))
     except Exception as e:
-        logger.warning(f"Embedding similarity failed, falling back to 0: {str(e)}")
-        return 0.0
+        logger.warning(f"Embedding similarity unavailable, using skill coverage only: {str(e)}")
+        return None
 
 
 def compute_match(resume_text: str, resume_skills: list[str], jd_text: str) -> dict:
@@ -47,16 +51,18 @@ def compute_match(resume_text: str, resume_skills: list[str], jd_text: str) -> d
 
     coverage = len(matched) / len(jd_pretty) if jd_pretty else 0.0
 
-    # ---- Semantic similarity (handles JDs whose skills aren't in our list) ----
-    resume_repr = (" ".join(resume_skills or []) + "\n" + (resume_text or ""))[:2500]
-    sim = _embedding_similarity(resume_repr, (jd_text or "")[:2500])
+    # ---- Semantic similarity (best-effort; never blocks the score) ----
+    logger.info("Computing resume-JD embedding similarity...")
+    resume_repr = " ".join(resume_skills or []) + "\n" + (resume_text or "")
+    sim = _embedding_similarity(resume_repr, jd_text or "")
 
-    # ---- Blend ----
+    # ---- Blend (gracefully degrade to coverage if embedding is unavailable) ----
     if jd_pretty:
-        raw = 0.55 * coverage + 0.45 * sim
+        raw = (0.55 * coverage + 0.45 * sim) if sim is not None else coverage
     else:
-        raw = sim  # no detectable JD skills -> lean entirely on semantics
+        raw = sim if sim is not None else 0.4  # nothing concrete to go on -> neutral
     score = int(round(max(5, min(raw * 100, 99))))
+    logger.info(f"Match computed: score={score}, matched={len(matched)}/{len(jd_pretty)}, sim={sim}")
 
     # ---- Human-readable summary ----
     if score >= 75:

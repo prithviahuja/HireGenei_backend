@@ -37,26 +37,41 @@ def get_embedding(text):
         texts = text
 
     import time
+    last_err = None
     for attempt in range(3):
-        response = requests.post(
-            "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2/pipeline/feature-extraction",
-            headers={"Authorization": f"Bearer {settings.HF_TOKEN}"},
-            json={"inputs": texts}
-        )
+        try:
+            # (connect, read) timeout so a stalled HF endpoint can NEVER hang a
+            # request forever — without this the embedding call blocks the whole
+            # job-match pipeline indefinitely.
+            response = requests.post(
+                "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2/pipeline/feature-extraction",
+                headers={"Authorization": f"Bearer {settings.HF_TOKEN}"},
+                json={"inputs": texts},
+                timeout=(8, 20),
+            )
+        except requests.RequestException as e:
+            last_err = e
+            logging.warning(f"HF embedding request error (attempt {attempt + 1}/3): {e}")
+            time.sleep(2)
+            continue
+
         if response.status_code == 503:
-            wait = response.json().get("estimated_time", 20)
+            try:
+                wait = response.json().get("estimated_time", 20)
+            except Exception:
+                wait = 20
             time.sleep(min(wait, 30))
             continue
         if response.status_code != 200:
             raise RuntimeError(f"HF embedding API request failed ({response.status_code}): {response.text}")
-        
+
         import torch
         embeddings = torch.tensor(response.json())
         if isinstance(text, str):
             return embeddings[0]  # Return single embedding for single input
         return embeddings
-    
-    raise RuntimeError("HF model failed to wake up after 3 attempts")
+
+    raise RuntimeError(f"HF embedding API failed after 3 attempts (last error: {last_err})")
 
 
 def _load_embedding_models():

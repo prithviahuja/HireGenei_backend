@@ -126,7 +126,7 @@ def _find_official_site(company: str) -> str | None:
 
 def _fetch_page(url: str) -> str:
     try:
-        resp = requests.get(url, headers=_ua_headers(), timeout=10)
+        resp = requests.get(url, headers=_ua_headers(), timeout=(6, 8))
         if resp.status_code == 200 and resp.text:
             soup = BeautifulSoup(resp.text, "html.parser")
             # mailto links are the most reliable email source
@@ -146,8 +146,8 @@ def _from_web(company: str) -> dict:
         return {"emails": [], "phones": [], "site": None}
 
     text = _fetch_page(site)
-    # Also try common contact pages.
-    for path in ("/contact", "/contact-us", "/about", "/careers"):
+    # Also try a couple of common contact pages (bounded so this never stalls).
+    for path in ("/contact", "/about"):
         if text and (_clean_emails(text, company) or _clean_phones(text)):
             break
         text += "\n" + _fetch_page(site.rstrip("/") + path)
