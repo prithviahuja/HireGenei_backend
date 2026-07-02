@@ -59,7 +59,48 @@ OUTPUT FORMAT: Return ONLY valid minified JSON, nothing else, in exactly this sh
 Do not wrap it in markdown code fences. Do not add commentary before or after."""
 
 
-def _build_user_message(resume_text, resume_skills, job, contacts):
+# Used instead of SYSTEM_PROMPT when the candidate supplied their own draft. The
+# model must keep the user's wording/tone/structure and only adapt it to the
+# specific job — NOT rewrite it into a brand-new email.
+TEMPLATE_SYSTEM_PROMPT = """You are an expert career copywriter. The candidate has \
+written their OWN base email draft. Your job is to ADAPT that draft to one specific \
+job/company — not to rewrite it from scratch. Always write in the FIRST PERSON as \
+the candidate.
+
+Follow these rules strictly:
+
+1. PRESERVE the candidate's draft as the foundation: keep their overall wording, \
+tone, voice, structure, and paragraph order. Make the SMALLEST changes needed to \
+fit this specific role and company.
+
+2. FILL IN any placeholders in the draft (e.g. [Role], [Company], [Hiring Manager], \
+{role}, {company}, <role>, blanks like "the ___ position") using the target role, \
+company, and recipient name. If a recipient name isn't provided, use a respectful \
+generic salutation.
+
+3. PERSONALIZE lightly: where the draft refers to the role/company or to why the \
+candidate is a fit, tailor that wording to THIS job and, if helpful, weave in 1–2 \
+concrete projects/experiences from the resume that match the role. Only use real \
+facts from the resume — NEVER invent projects, employers, metrics, skills, degrees, \
+or contact details. Do not pad the draft with generic filler or flattery.
+
+4. Keep it roughly the same length as the candidate's draft (do not balloon it).
+
+5. SIGNATURE: If the draft already ends with a sign-off and contact details, keep \
+them. If it does not, append a warm sign-off ("Warm regards," on its own line), the \
+candidate's name, then each provided contact detail (phone, LinkedIn, GitHub, email) \
+on its own line — using ONLY the details in CANDIDATE CONTACT DETAILS, omitting any \
+that are missing. Never fabricate contact details.
+
+6. SUBJECT: If the draft includes a subject line, adapt it to this role/company. \
+Otherwise write a concise, specific subject line (no clickbait, no emojis).
+
+OUTPUT FORMAT: Return ONLY valid minified JSON, nothing else, in exactly this shape:
+{"subject": "<subject line>", "body": "<full email body with \\n for line breaks>"}
+Do not wrap it in markdown code fences. Do not add commentary before or after."""
+
+
+def _build_user_message(resume_text, resume_skills, job, contacts, email_template=""):
     role = job.get("title", "")
     company = job.get("company", "")
     jd = (job.get("description") or "").strip()
@@ -80,6 +121,16 @@ def _build_user_message(resume_text, resume_skills, job, contacts):
 
     skills = ", ".join(resume_skills or []) or "(see resume)"
 
+    template_section = ""
+    closing = "Write the tailored cold email now as JSON only."
+    if email_template:
+        template_section = (
+            f"\nCANDIDATE'S OWN EMAIL DRAFT (adapt THIS to the job above — keep its "
+            f"wording, tone and structure; fill placeholders; do not rewrite from scratch):\n"
+            f"{email_template[:4000]}\n"
+        )
+        closing = "Adapt the candidate's draft to this specific job now, as JSON only."
+
     return f"""TARGET ROLE: {role}
 TARGET COMPANY: {company}
 
@@ -93,8 +144,8 @@ CANDIDATE RESUME (use real projects/experience from here; infer the candidate's 
 
 CANDIDATE CONTACT DETAILS (use these verbatim in the signature; omit any not listed):
 {contact_block}
-
-Write the tailored cold email now as JSON only."""
+{template_section}
+{closing}"""
 
 
 def _get_llm(model_name: str):
@@ -142,13 +193,20 @@ def _parse_email_json(raw: str) -> dict | None:
     return None
 
 
-def generate_cold_email(resume_text: str, resume_skills: list[str], job: dict) -> dict:
+def generate_cold_email(resume_text: str, resume_skills: list[str], job: dict,
+                        email_template: str = "") -> dict:
     """Returns {subject, body, to}. `to` is the best discovered recipient email
-    (may be empty — the frontend lets the user fill it in)."""
-    applicant = extract_applicant_contacts(resume_text)
-    user_msg = _build_user_message(resume_text, resume_skills, job, applicant)
+    (may be empty — the frontend lets the user fill it in).
 
-    messages = [("system", SYSTEM_PROMPT), ("human", user_msg)]
+    If `email_template` is provided, it's the candidate's own base draft: the
+    model personalizes that draft for this job rather than writing one from
+    scratch. When empty, the default auto-writer is used."""
+    email_template = (email_template or "").strip()
+    applicant = extract_applicant_contacts(resume_text)
+    user_msg = _build_user_message(resume_text, resume_skills, job, applicant, email_template)
+
+    system_prompt = TEMPLATE_SYSTEM_PROMPT if email_template else SYSTEM_PROMPT
+    messages = [("system", system_prompt), ("human", user_msg)]
 
     result = None
     for model_name in (EMAIL_MODEL, FALLBACK_MODEL):

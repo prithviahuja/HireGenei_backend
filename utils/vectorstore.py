@@ -17,7 +17,7 @@ def _evict_locked():
         _SESSIONS.popitem(last=False)
 
 
-def create_session(session_id: str, skills, roles, resume_text: str = ""):
+def create_session(session_id: str, skills, roles, resume_text: str = "", domain: str = "", seniority: str = ""):
     with _LOCK:
         _SESSIONS[session_id] = {
             "vectorstore": None,
@@ -27,6 +27,9 @@ def create_session(session_id: str, skills, roles, resume_text: str = ""):
             # the user's real projects/experience (the PDF itself is deleted once
             # the vectorstore is built).
             "resume_text": resume_text or "",
+            # From the LLM extractor — used to judge seniority fit when matching.
+            "domain": domain or "",
+            "seniority": seniority or "",
             "ts": time.time(),
         }
         _SESSIONS.move_to_end(session_id)
@@ -38,6 +41,20 @@ def set_vectorstore(session_id: str, vs):
         if session_id in _SESSIONS:
             _SESSIONS[session_id]["vectorstore"] = vs
             _SESSIONS.move_to_end(session_id)
+
+
+def update_profile(session_id: str, skills=None, roles=None):
+    """Overwrite the stored skills/roles for a session (user manual override).
+    Passing None for either leaves that field unchanged."""
+    with _LOCK:
+        s = _SESSIONS.get(session_id)
+        if not s:
+            return
+        if skills is not None:
+            s["skills"] = skills
+        if roles is not None:
+            s["roles"] = roles
+        _SESSIONS.move_to_end(session_id)
 
 
 def get_session(session_id):
@@ -68,6 +85,16 @@ def get_roles(session_id):
 def get_resume_text(session_id):
     s = get_session(session_id)
     return s.get("resume_text", "") if s else ""
+
+
+def get_seniority(session_id):
+    s = get_session(session_id)
+    return s.get("seniority", "") if s else ""
+
+
+def get_domain(session_id):
+    s = get_session(session_id)
+    return s.get("domain", "") if s else ""
 
 
 def is_ready(session_id) -> bool:

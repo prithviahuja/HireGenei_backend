@@ -8,10 +8,10 @@ from models.response_models import (
 )
 from services.job_service import scrape_jobs_async, scrape_jobs_stream
 from services.job_detail_service import fetch_job_description
-from services.match_service import compute_match
+from services.match_service import score_match
 from services.contact_service import find_contacts
 from services.email_service import generate_cold_email
-from utils.vectorstore import get_session, get_resume_text, get_skills
+from utils.vectorstore import get_session, get_resume_text, get_skills, get_seniority
 import logging
 
 logger = logging.getLogger(__name__)
@@ -26,6 +26,7 @@ async def scrape_jobs(request: JobScrapeRequest):
         jobs = await scrape_jobs_async(
             roles=request.roles, cities=request.cities, country=request.country,
             work_types=request.work_types, exp_levels=request.exp_levels, time_filter=request.time_filter,
+            sources=request.sources,
         )
         return JobScrapeResponse(jobs=jobs)
     except Exception as e:
@@ -44,6 +45,7 @@ async def scrape_jobs_stream_route(request: JobScrapeRequest):
             async for job in scrape_jobs_stream(
                 roles=request.roles, cities=request.cities, country=request.country,
                 work_types=request.work_types, exp_levels=request.exp_levels, time_filter=request.time_filter,
+                sources=request.sources,
             ):
                 count += 1
                 yield json.dumps({"type": "job", "job": job}) + "\n"
@@ -71,6 +73,7 @@ async def _run_match_pipeline(request: JobMatchRequest):
 
     resume_text = get_resume_text(request.session_id)
     resume_skills = get_skills(request.session_id)
+    resume_seniority = get_seniority(request.session_id)
     if not resume_text:
         raise ValueError("We couldn't read your resume text for this session. Please re-upload your resume.")
 
@@ -81,8 +84,8 @@ async def _run_match_pipeline(request: JobMatchRequest):
         "description_excerpt": (jd_text[:800] if jd_text else ""),
     }
 
-    # 2) Match score + breakdown
-    match = await run_in_threadpool(compute_match, resume_text, resume_skills, jd_text)
+    # 2) Match score + breakdown (LLM-first, domain-agnostic, seniority-aware)
+    match = await run_in_threadpool(score_match, resume_text, resume_skills, jd_text, resume_seniority)
     yield "score", match
 
     # 3) Company contacts (JD regex first, then keyless web search)
@@ -98,7 +101,10 @@ async def _run_match_pipeline(request: JobMatchRequest):
         "description": jd_text,
         "_contacts": contact,
     }
-    email = await run_in_threadpool(generate_cold_email, resume_text, resume_skills, job_payload)
+    email = await run_in_threadpool(
+        generate_cold_email, resume_text, resume_skills, job_payload,
+        (request.email_template or "").strip(),
+    )
     yield "email", email
 
 

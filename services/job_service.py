@@ -53,7 +53,8 @@ def process_job(job, work_type, exp_level, position):
             "title": title,
             "company": company,
             "location": location,
-            "link": link
+            "link": link,
+            "source": "LinkedIn",
         }
     except Exception as e:
         logger.error(f"Error processing job card: {str(e)}")
@@ -170,26 +171,50 @@ def _build_locations(cities, states):
     return cities_list
 
 
-async def scrape_jobs_stream(roles, cities, country, work_types, exp_levels, time_filter):
-    """Yield jobs incrementally as each (city, role) worker finishes, so the
-    frontend renders results live. Concurrency is capped at 3 (like the original
-    ThreadPoolExecutor) to avoid LinkedIn rate-limits; de-dupe by link AND
-    (title, company, location)."""
+async def scrape_jobs_stream(roles, cities, country, work_types, exp_levels, time_filter, sources=None):
+    """Yield jobs incrementally as each worker finishes, so the frontend renders
+    results live. Two engines run in parallel:
+      - LinkedIn scraping (unchanged): one worker per (city, role), capped at 3
+        concurrent to avoid LinkedIn rate-limits.
+      - JSearch API (Google for Jobs → Naukri/Indeed/foundit/…): one worker per
+        role, only when a RapidAPI key is configured.
+    `sources` selects which engines run (None => all available). De-dupe by link
+    AND (title, company, location) across BOTH sources."""
+    from services import jsearch_service
+
     locations = _build_locations(cities, country)
     positions = [str(p).strip().replace(' ', '%20') for p in roles if isinstance(p, str) and p.strip()]
-    if not locations or not positions:
-        return
+
+    wanted = {s.lower() for s in sources} if sources else None
+    use_linkedin = (wanted is None) or ("linkedin" in wanted)
+    use_jsearch = ((wanted is None) or ("jsearch" in wanted)) and jsearch_service.is_enabled()
 
     sem = asyncio.Semaphore(3)
 
-    async def worker(loc, pos):
+    async def linkedin_worker(loc, pos):
         async with sem:
             return await run_in_threadpool(
                 scrape_jobs_sync, loc, pos, work_types, exp_levels, time_filter
             )
 
-    tasks = [asyncio.create_task(worker(loc, pos)) for loc in locations for pos in positions]
-    logger.info(f"Streaming scrape: {len(tasks)} (city x role) workers dispatched.")
+    async def jsearch_worker():
+        # JSearch handles its own role capping + India location internally.
+        return await run_in_threadpool(
+            jsearch_service.search_jobs, roles, cities, country, work_types, time_filter
+        )
+
+    tasks = []
+    if use_linkedin and locations and positions:
+        tasks += [asyncio.create_task(linkedin_worker(loc, pos)) for loc in locations for pos in positions]
+    if use_jsearch and positions:
+        tasks.append(asyncio.create_task(jsearch_worker()))
+
+    if not tasks:
+        return
+
+    logger.info(
+        f"Streaming scrape: {len(tasks)} workers (linkedin={use_linkedin}, jsearch={use_jsearch})."
+    )
 
     seen_links = set()
     seen_tc = set()
@@ -211,12 +236,13 @@ async def scrape_jobs_stream(roles, cities, country, work_types, exp_levels, tim
             if link:
                 seen_links.add(link)
             seen_tc.add(tc)
+            job.setdefault("source", "LinkedIn")
             yield job
 
 
-async def scrape_jobs_async(roles, cities, country, work_types, exp_levels, time_filter):
+async def scrape_jobs_async(roles, cities, country, work_types, exp_levels, time_filter, sources=None):
     # Non-streaming variant: collect everything from the incremental generator.
     results = []
-    async for job in scrape_jobs_stream(roles, cities, country, work_types, exp_levels, time_filter):
+    async for job in scrape_jobs_stream(roles, cities, country, work_types, exp_levels, time_filter, sources):
         results.append(job)
     return results

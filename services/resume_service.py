@@ -282,10 +282,181 @@ def prettify_skill(skill: str) -> str:
 
 
 def compute_resume_score(skills, roles) -> int:
-    """Simple deterministic 0-100 readiness score."""
+    """Legacy count-only score. Kept for backward compatibility; new code should use
+    score_resume() which reads the actual resume content."""
     skill_points = min(len(skills) * 3, 55)
     role_points = min(len(roles) * 5, 25)
     return max(35, min(20 + skill_points + role_points, 99))
+
+
+# ---- Content-aware resume scoring -----------------------------------------
+# The old score just counted skills/roles, so two very different resumes with the
+# same keyword count scored identically. This version reads the resume text and
+# grades the things recruiters/ATS actually look at: quantified impact, strong
+# action verbs, section + contact completeness, length, and skill/role breadth.
+# It's deterministic (fast, free, explainable) and degrades gracefully on thin text.
+
+_ACTION_VERBS = {
+    "led", "built", "designed", "developed", "created", "launched", "implemented",
+    "managed", "improved", "increased", "reduced", "optimized", "automated",
+    "delivered", "achieved", "spearheaded", "architected", "engineered", "drove",
+    "grew", "scaled", "streamlined", "deployed", "migrated", "established",
+    "initiated", "mentored", "analyzed", "researched", "produced", "negotiated",
+    "coordinated", "executed", "boosted", "cut", "saved", "generated",
+    "transformed", "accelerated", "resolved", "trained", "supervised", "founded",
+    "owned", "shipped", "championed",
+}
+_WEAK_PHRASES = (
+    "responsible for", "duties included", "worked on", "helped with",
+    "involved in", "tasked with", "responsibilities included",
+)
+# A line "quantifies impact" if it ties a number to a result (%, currency, scale
+# words, or a 3+ digit figure).
+_IMPACT_HINT_RE = re.compile(
+    r'(\d+\s?%|[₹$]\s?\d|\busd\b|\binr\b|'
+    r'\b\d+\s?(?:k|m|x|cr|lakh|lakhs|crore|users?|customers?|clients?|projects?|'
+    r'people|members?|hours?|days?|weeks?|months?|years?)\b|\b\d{3,}\b)',
+    re.I,
+)
+
+_SECTION_PATTERNS = {
+    "experience": r'\b(experience|employment|work history|professional background)\b',
+    "education": r'\b(education|bachelor|master|b\.?tech|m\.?tech|b\.?sc|university|college|degree|diploma)\b',
+    "skills": r'\b(skills|technologies|technical|tools|competenc)\b',
+    "summary/projects": r'\b(projects?|portfolio|summary|objective|profile|about me)\b',
+    "certifications": r'\b(certification|certificate|licen[cs]e|accredit)\b',
+}
+
+
+def _clamp(v, lo=0.0, hi=100.0):
+    return max(lo, min(v, hi))
+
+
+def score_resume(resume_text: str, skills, roles) -> dict:
+    """Return {score, breakdown, suggestions, strengths}.
+
+    score: 0-100 overall readiness.
+    breakdown: per-dimension 0-100 sub-scores (so the number isn't a black box).
+    suggestions: concrete, resume-specific improvement tips (weakest areas first).
+    strengths: what's already working.
+    """
+    text = resume_text or ""
+    skills = skills or []
+    roles = roles or []
+    low = text.lower()
+
+    # Substantive lines (skip headers/short fragments).
+    lines = [ln.strip() for ln in text.splitlines() if len(ln.strip()) > 25]
+    total_lines = len(lines)
+
+    # 1) Impact & quantification
+    quantified = sum(1 for ln in lines if _IMPACT_HINT_RE.search(ln))
+    quant_ratio = (quantified / total_lines) if total_lines else 0.0
+    impact = _clamp(min(quantified / 6.0, 1.0) * 70 + min(quant_ratio * 2.0, 1.0) * 30)
+
+    # 2) Action verbs vs. weak phrases
+    action_hits = 0
+    for ln in lines:
+        head = re.sub(r'^[\-•‣◦\*·\s]+', '', ln).split()
+        if head and head[0].lower().rstrip(",.:;") in _ACTION_VERBS:
+            action_hits += 1
+    weak_hits = sum(low.count(p) for p in _WEAK_PHRASES)
+    action = _clamp(min(action_hits / 6.0, 1.0) * 100 - weak_hits * 8)
+
+    # 3) Length / readability
+    words = len(text.split())
+    if words < 150:
+        length = words / 150 * 55
+    elif words < 300:
+        length = 55 + (words - 150) / 150 * 35
+    elif words <= 900:
+        length = 100
+    elif words <= 1300:
+        length = 90
+    else:
+        length = 70
+    length = _clamp(length)
+
+    # 4) Completeness: sections + contact details
+    missing_sections = [name for name, pat in _SECTION_PATTERNS.items() if not re.search(pat, low)]
+    sections_found = len(_SECTION_PATTERNS) - len(missing_sections)
+    has_email = bool(_EMAIL_RE.search(text))
+    has_phone = any(8 <= len(re.sub(r'\D', '', c)) <= 15 for c in _PHONE_RE.findall(text))
+    has_linkedin = bool(_LINKEDIN_RE.search(text))
+    contact_found = sum([has_email, has_phone, has_linkedin])
+    completeness = _clamp((sections_found / len(_SECTION_PATTERNS)) * 60 + (contact_found / 3) * 40)
+
+    # 5) Breadth
+    skills_breadth = _clamp(min(len(skills) / 12.0, 1.0) * 100)
+    role_fit = _clamp(min(len(roles) / 4.0, 1.0) * 100)
+
+    breakdown = {
+        "Impact & metrics": round(impact),
+        "Action verbs": round(action),
+        "Completeness": round(completeness),
+        "Skills breadth": round(skills_breadth),
+        "Length": round(length),
+        "Role fit": round(role_fit),
+    }
+    weights = {
+        "Impact & metrics": 0.25,
+        "Completeness": 0.20,
+        "Skills breadth": 0.20,
+        "Action verbs": 0.15,
+        "Length": 0.10,
+        "Role fit": 0.10,
+    }
+    raw = sum(breakdown[k] * w for k, w in weights.items())
+    score = int(_clamp(round(raw), 20, 99))
+
+    # ---- Resume-specific suggestions (weakest dimensions first) ----
+    suggestions: list[str] = []
+    if impact < 70:
+        suggestions.append(
+            f"Quantify your impact — only {quantified} line(s) include a number or metric. "
+            "Add results like “reduced costs 30%” or “handled 200+ clients/month.”"
+        )
+    if missing_sections:
+        suggestions.append(f"Add the missing section(s): {', '.join(missing_sections[:3])}.")
+    if contact_found < 3:
+        need = [n for n, ok in (("email", has_email), ("phone", has_phone), ("LinkedIn", has_linkedin)) if not ok]
+        if need:
+            suggestions.append(f"Add your {', '.join(need)} so recruiters can reach you.")
+    if action < 70:
+        if weak_hits:
+            suggestions.append(
+                "Replace weak phrases like “responsible for” with strong action verbs "
+                "(Led, Built, Designed, Improved)."
+            )
+        else:
+            suggestions.append("Start each bullet with a strong action verb (Led, Built, Designed) to sound results-driven.")
+    if words < 200:
+        suggestions.append(f"Your resume looks thin (~{words} words). Expand on your projects, responsibilities, and outcomes.")
+    elif words > 1100:
+        suggestions.append(f"It’s quite long (~{words} words) — tighten toward 1–2 pages and keep only the most relevant points.")
+    if skills_breadth < 60:
+        suggestions.append("List more concrete skills/tools relevant to your target roles.")
+
+    suggestions = suggestions[:4]
+    if not suggestions:
+        suggestions = ["Strong resume — tailor the keywords to each specific job description before applying."]
+
+    # ---- Strengths (what's already working) ----
+    strengths: list[str] = []
+    if impact >= 70:
+        strengths.append("Achievements are backed by concrete numbers and metrics.")
+    if action >= 70:
+        strengths.append("Bullets lead with strong, results-oriented action verbs.")
+    if completeness >= 80:
+        strengths.append("All key sections and contact details are present.")
+    if skills_breadth >= 70:
+        strengths.append(f"Broad skill set — {len(skills)} skills detected.")
+    if 300 <= words <= 900:
+        strengths.append("Well-balanced length and level of detail.")
+    if not strengths and skills:
+        strengths = [f"Relevant skill: {s}" for s in skills[:3]]
+
+    return {"score": score, "breakdown": breakdown, "suggestions": suggestions, "strengths": strengths}
 
 
 def extract_resume_details(pdf_path: str):
@@ -298,6 +469,67 @@ def extract_resume_details(pdf_path: str):
     pretty_skills = [prettify_skill(s) for s in extracted_skills]
     score = compute_resume_score(pretty_skills, matched_roles)
     return pretty_skills, matched_roles, score
+
+
+def analyze_resume(pdf_path: str) -> dict:
+    """Domain-agnostic resume analysis. Tries the LLM extractor first (works for
+    ANY field — healthcare, finance, design, etc.), then falls back to the legacy
+    tech keyword matcher so behaviour never regresses if the LLM is down.
+
+    Returns a dict: {skills, roles, score, breakdown, suggestions, strengths,
+    resume_text, domain, seniority}. The PDF text is extracted once here and
+    reused for the vectorstore/email later.
+    """
+    resume_text = extract_resume_text(pdf_path)
+
+    skills: list[str] = []
+    roles: list[str] = []
+    domain = ""
+    seniority = ""
+
+    # 1) LLM-first (domain-agnostic).
+    try:
+        from services.llm_extract_service import extract_profile_llm
+        profile = extract_profile_llm(resume_text)
+    except Exception as e:
+        logger.warning(f"LLM extractor errored, will fall back: {str(e)}")
+        profile = None
+
+    if profile and profile.get("skills"):
+        skills = profile["skills"]
+        roles = profile.get("roles") or []
+        domain = profile.get("domain", "")
+        seniority = profile.get("seniority", "")
+        logger.info("Resume analyzed via LLM extractor.")
+
+    # 2) Keyword fallback for skills (tech taxonomy) when the LLM gave us nothing.
+    if not skills:
+        logger.info("Falling back to keyword skill matcher.")
+        kw_skills, kw_roles, _ = extract_resume_details(pdf_path)
+        skills = kw_skills
+        if not roles:
+            roles = kw_roles
+
+    # 3) If we have skills but no roles yet, derive roles from the keyword model.
+    if skills and not roles:
+        try:
+            raw = match_skills_in_text(clean_resume_text(resume_text), use_semantic=False)
+            roles = roles_score(raw)
+        except Exception as e:
+            logger.warning(f"Role derivation fallback failed: {str(e)}")
+
+    scored = score_resume(resume_text, skills, roles)
+    return {
+        "skills": skills,
+        "roles": roles,
+        "score": scored["score"],
+        "breakdown": scored["breakdown"],
+        "suggestions": scored["suggestions"],
+        "strengths": scored["strengths"],
+        "resume_text": resume_text,
+        "domain": domain,
+        "seniority": seniority,
+    }
 
 def build_vectorstore_bg(pdf_path: str, session_id: str):
     try:
